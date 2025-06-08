@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { logger } from '../utils/logger.js';
 import { ApiError } from '../utils/errors.js';
+import DataCache from './dataCache.js';
 
 /**
  * GridStatus API client for fetching electricity market data
@@ -16,11 +17,11 @@ class GridStatusClient {
     this.requestQueue = [];
     this.isProcessingQueue = false;
     this.lastRequestTime = Date.now();
-    this.minRequestInterval = 2000; // 2 seconds buffer
+    this.minRequestInterval = 2500; // 2.5 seconds buffer
+    this.requestTimeout = 8000; // 8 seconds to leave buffer for Netlify's 9s limit
     
-    // Cache configuration
-    this.datasetsCache = new Map();
-    this.cacheValidityMs = 60 * 60 * 1000; // 1 hour
+    // Cache configuration using shared DataCache
+    this.datasetsCache = new DataCache(240); // 4 hours in minutes
     
     this.client = this.createAxiosClient();
   }
@@ -111,17 +112,33 @@ class GridStatusClient {
   }
 
   /**
-   * Rate-limited request wrapper using queue system
+   * Rate-limited request wrapper using queue system with timeout handling
    */
   async makeRateLimitedRequest(requestFn) {
     return new Promise((resolve, reject) => {
-      this.requestQueue.push({ requestFn, resolve, reject });
+      // Create timeout promise for this specific request
+      const timeoutId = setTimeout(() => {
+        reject(new ApiError('Request timeout - GridStatus API taking too long', 504));
+      }, this.requestTimeout);
+      
+      // Wrap resolve/reject to clear timeout
+      const wrappedResolve = (result) => {
+        clearTimeout(timeoutId);
+        resolve(result);
+      };
+      
+      const wrappedReject = (error) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      };
+      
+      this.requestQueue.push({ requestFn, resolve: wrappedResolve, reject: wrappedReject });
       this.processQueue();
     });
   }
 
   /**
-   * Process request queue with rate limiting
+   * Process request queue with rate limiting and timeout awareness
    */
   async processQueue() {
     if (this.isProcessingQueue || this.requestQueue.length === 0) {
@@ -133,11 +150,20 @@ class GridStatusClient {
     while (this.requestQueue.length > 0) {
       const { requestFn, resolve, reject } = this.requestQueue.shift();
       
-      await this.waitForRateLimit();
-      
       try {
+        await this.waitForRateLimit();
+        
+        // Execute request with internal timeout race
+        const requestPromise = requestFn();
+        const internalTimeoutPromise = new Promise((_, timeoutReject) => {
+          setTimeout(() => {
+            timeoutReject(new ApiError('Internal request timeout', 504));
+          }, this.requestTimeout - 500); // Slightly less than external timeout
+        });
+        
         this.lastRequestTime = Date.now();
-        const result = await requestFn();
+        
+        const result = await Promise.race([requestPromise, internalTimeoutPromise]);
         resolve(result);
       } catch (error) {
         reject(error);
@@ -148,7 +174,7 @@ class GridStatusClient {
   }
 
   /**
-   * Wait for rate limit if necessary
+   * Wait for rate limit if necessary, but respect overall timeout constraints
    */
   async waitForRateLimit() {
     const now = Date.now();
@@ -156,8 +182,15 @@ class GridStatusClient {
     const waitTime = Math.max(0, this.minRequestInterval - timeSinceLastRequest);
     
     if (waitTime > 0) {
-      logger.debug(`⏳ Rate limiting: waiting ${waitTime}ms before next request`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
+      // Don't wait longer than what would cause us to exceed the timeout
+      const maxWaitTime = Math.min(waitTime, this.requestTimeout / 2);
+      
+      if (maxWaitTime > 0) {
+        logger.debug(`⏳ Rate limiting: waiting ${maxWaitTime}ms before next request (quota preservation)`);
+        await new Promise(resolve => setTimeout(resolve, maxWaitTime));
+      } else {
+        logger.warn('⚠️ Skipping rate limit wait due to timeout constraints');
+      }
     }
   }
 
@@ -208,12 +241,13 @@ class GridStatusClient {
    * Get available datasets with caching
    */
   async getAvailableDatasets() {
-    const cacheKey = 'datasets';
-    const cached = this.datasetsCache.get(cacheKey);
+    const endpoint = '/v1/datasets';
+    const params = {};
+    const cached = this.datasetsCache.get(endpoint, params);
     
-    if (cached && Date.now() < cached.expiry) {
-      logger.info(`📦 Using cached datasets (${cached.data.length} datasets)`);
-      return cached.data;
+    if (cached) {
+      logger.info(`📦 Using cached datasets (${cached.length} datasets)`);
+      return cached;
     }
     
     try {
@@ -225,11 +259,8 @@ class GridStatusClient {
       
       const datasets = response.data?.data || [];
       
-      // Cache the results
-      this.datasetsCache.set(cacheKey, {
-        data: datasets,
-        expiry: Date.now() + this.cacheValidityMs
-      });
+      // Cache the results using shared DataCache
+      this.datasetsCache.set(endpoint, params, datasets);
       
       logger.info(`✅ Successfully fetched ${datasets.length} available datasets`);
       return datasets;
@@ -334,7 +365,7 @@ class GridStatusClient {
           params: {
             start_time: startTime,
             end_time: endTime,
-            page_size: type === 'day-ahead' ? 200 : 500,
+            page_size: type === 'day-ahead' ? 50 : 100,
             timezone: timezone
           }
         });
