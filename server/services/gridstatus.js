@@ -17,7 +17,7 @@ class GridStatusClient {
     this.requestQueue = [];
     this.isProcessingQueue = false;
     this.lastRequestTime = Date.now();
-    this.minRequestInterval = 1100; // 1.1 seconds - aggressive but should avoid 429s
+    this.minRequestInterval = 2000; // 2 seconds - aggressive but should avoid 429s
     this.requestTimeout = 4000; // 4 seconds max per request for Netlify constraints
     
     // Cache configuration using shared DataCache
@@ -454,7 +454,7 @@ class GridStatusClient {
           params: {
             start_time: startTime,
             end_time: endTime,
-            page_size: type === 'day-ahead' ? 50 : 25, // Much smaller pages for Netlify speed
+            page_size: type === 'day-ahead' ? 200 : 100, // Much smaller pages for Netlify speed
             timezone: timezone
           }
         });
