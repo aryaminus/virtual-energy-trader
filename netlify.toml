@@ -1,0 +1,30 @@
+# Netlify configuration for Virtual Energy Trader
+
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+[functions]
+  external_node_modules = ["express", "axios", "@langchain/anthropic", "@langchain/community", "@langchain/core", "@langchain/google-genai", "@langchain/openai", "cors", "helmet", "compression", "dotenv"]
+  node_bundler = "esbuild"
+  directory = "netlify/functions"
+
+# Redirect API calls to our Express function
+[[redirects]]
+  force = true
+  from = "/api/*"
+  status = 200
+  to = "/.netlify/functions/api/:splat"
+
+# SPA fallback - serve index.html for all routes
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Environment variables (set these in Netlify UI)
+# GRIDSTATUS_API_KEY=your_api_key_here
+# OPENAI_API_KEY=your_openai_key_here
+# ANTHROPIC_API_KEY=your_anthropic_key_here
+# GOOGLE_API_KEY=your_google_key_here
+# TOGETHER_API_KEY=your_together_key_here
