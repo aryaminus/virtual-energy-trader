@@ -36,7 +36,7 @@ class GridStatusClient {
         'Content-Type': 'application/json',
         'User-Agent': 'VirtualEnergyTrader/1.0.0'
       },
-      timeout: 15000
+      timeout: 8000
     });
 
     // Request interceptor
@@ -334,7 +334,7 @@ class GridStatusClient {
           params: {
             start_time: startTime,
             end_time: endTime,
-            page_size: type === 'day-ahead' ? 2500 : 5000,
+            page_size: type === 'day-ahead' ? 200 : 500,
             timezone: timezone
           }
         });

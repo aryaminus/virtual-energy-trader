@@ -107,19 +107,6 @@ const handleGridStatusError = (error, date, iso) => {
 };
 
 /**
- * Test GridStatus API connection
- */
-const testGridStatusConnection = async (gridStatusClient) => {
-  try {
-    await gridStatusClient.testConnection();
-    logger.info('✅ GridStatus API connection verified');
-  } catch (error) {
-    logger.error('❌ GridStatus API connection failed:', error);
-    throw error;
-  }
-};
-
-/**
  * Fetch market prices from GridStatus API
  */
 const fetchMarketPrices = async (gridStatusClient, date, iso) => {
