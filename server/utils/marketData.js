@@ -61,25 +61,43 @@ export const transformGridStatusData = (dayAheadData, realTimeData, userTimezone
   const hourlyData = {};
   
   // Process day-ahead data in Pacific Time
-  dayAheadData.forEach(item => {
-    const timestamp = item.interval_start_utc || item.interval_start_local || item.timestamp || item.datetime || item.time || item.interval_start;
-    const price = parseFloat(item.lmp || item.price || item.energy_price || item.da_lmp || item.rt_lmp || 0);
-    
-    if (timestamp && !isNaN(price) && price > 0) {
-      try {
-        // Use Pacific Time for hour calculation (data source timezone)
-        const pacificHour = getPacificTimeHour(timestamp);
-        
-        if (!hourlyData[pacificHour]) {
-          hourlyData[pacificHour] = { prices: [], timestamp, count: 0 };
-        }
-        hourlyData[pacificHour].prices.push(price);
-        hourlyData[pacificHour].count++;
-      } catch (error) {
-        logger.warn(`⚠️  Invalid timestamp: ${timestamp}`);
+  dayAheadData.forEach((item, index) => {
+    try {
+      // Validate item structure
+      if (!item || typeof item !== 'object') {
+        logger.warn(`⚠️  Skipping invalid item at index ${index}: not an object`);
+        return;
       }
-    } else {
-      logger.debug(`⚠️  Skipping invalid data point: timestamp=${timestamp}, price=${price}`);
+      
+      const timestamp = item.interval_start_utc || item.interval_start_local || item.timestamp || item.datetime || item.time || item.interval_start;
+      const price = parseFloat(item.lmp || item.price || item.energy_price || item.da_lmp || item.rt_lmp || 0);
+      
+      // Validate timestamp and price
+      if (!timestamp || typeof timestamp !== 'string') {
+        logger.debug(`⚠️  Skipping item ${index}: invalid timestamp`);
+        return;
+      }
+      
+      if (isNaN(price) || price <= 0 || price > 10000) {
+        logger.debug(`⚠️  Skipping item ${index}: invalid price (${price})`);
+        return;
+      }
+      
+      // Use Pacific Time for hour calculation (data source timezone)
+      const pacificHour = getPacificTimeHour(timestamp);
+      
+      if (pacificHour < 0 || pacificHour > 23) {
+        logger.warn(`⚠️  Invalid hour extracted: ${pacificHour} from timestamp ${timestamp}`);
+        return;
+      }
+      
+      if (!hourlyData[pacificHour]) {
+        hourlyData[pacificHour] = { prices: [], timestamp, count: 0 };
+      }
+      hourlyData[pacificHour].prices.push(price);
+      hourlyData[pacificHour].count++;
+    } catch (error) {
+      logger.warn(`⚠️  Error processing day-ahead item ${index}: ${error.message}`);
     }
   });
   
@@ -99,13 +117,18 @@ export const transformGridStatusData = (dayAheadData, realTimeData, userTimezone
     let pacificHour = userHour;
     if (date && userTimezone !== 'America/Los_Angeles') {
       try {
-        // This is a simplified conversion - in reality we'd need more complex timezone math
-        const timezoneOffset = new Date().getTimezoneOffset() / 60;
-        const pacificOffset = 8; // Pacific Standard Time offset from UTC
-        const userOffset = new Date().toLocaleString('en', {timeZone: userTimezone}).includes('GMT') ? 0 : timezoneOffset;
-        pacificHour = (userHour + (pacificOffset - userOffset) + 24) % 24;
+        // More robust timezone conversion using actual date
+        const testDate = new Date(`${date}T${userHour.toString().padStart(2, '0')}:00:00`);
+        const userTime = new Date(testDate.toLocaleString('en-US', { timeZone: userTimezone }));
+        const pacificTime = new Date(testDate.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+        
+        // Calculate hour difference
+        const hourDiff = Math.round((userTime.getTime() - pacificTime.getTime()) / (1000 * 60 * 60));
+        pacificHour = (userHour - hourDiff + 24) % 24;
       } catch (error) {
         logger.warn(`⚠️  Timezone conversion error for hour ${userHour}: ${error.message}`);
+        // Fallback to no conversion if timezone parsing fails
+        pacificHour = userHour;
       }
     }
     
@@ -166,30 +189,55 @@ export const transformGridStatusData = (dayAheadData, realTimeData, userTimezone
   const hourlyRTData = {};
   
   // Process real-time data in Pacific Time
-  realTimeData.forEach(item => {
-    const timestamp = item.interval_start_utc || item.interval_start_local || item.timestamp || item.datetime || item.time || item.interval_start;
-    const price = parseFloat(item.lmp || item.price || item.energy_price || item.da_lmp || item.rt_lmp || 0);
-    
-    if (timestamp && !isNaN(price) && price > 0) {
-      try {
-        // Use Pacific Time for hour and minute calculation
-        const pacificTime = toPacificTime(timestamp);
-        const pacificHour = pacificTime.getHours();
-        const minute = pacificTime.getMinutes();
-        
-        if (!hourlyRTData[pacificHour]) {
-          hourlyRTData[pacificHour] = [];
-        }
-        
-        hourlyRTData[pacificHour].push({
-          interval: Math.floor(minute / 15), // 15-minute intervals
-          price,
-          timestamp,
-          minute
-        });
-      } catch (error) {
-        logger.warn(`⚠️  Invalid RT timestamp: ${timestamp}`);
+  realTimeData.forEach((item, index) => {
+    try {
+      // Validate item structure
+      if (!item || typeof item !== 'object') {
+        logger.warn(`⚠️  Skipping invalid RT item at index ${index}: not an object`);
+        return;
       }
+      
+      const timestamp = item.interval_start_utc || item.interval_start_local || item.timestamp || item.datetime || item.time || item.interval_start;
+      const price = parseFloat(item.lmp || item.price || item.energy_price || item.da_lmp || item.rt_lmp || 0);
+      
+      // Validate timestamp and price
+      if (!timestamp || typeof timestamp !== 'string') {
+        logger.debug(`⚠️  Skipping RT item ${index}: invalid timestamp`);
+        return;
+      }
+      
+      if (isNaN(price) || price <= 0 || price > 10000) {
+        logger.debug(`⚠️  Skipping RT item ${index}: invalid price (${price})`);
+        return;
+      }
+      
+      // Use Pacific Time for hour and minute calculation
+      const pacificTime = toPacificTime(timestamp);
+      const pacificHour = pacificTime.getHours();
+      const minute = pacificTime.getMinutes();
+      
+      if (pacificHour < 0 || pacificHour > 23) {
+        logger.warn(`⚠️  Invalid RT hour extracted: ${pacificHour} from timestamp ${timestamp}`);
+        return;
+      }
+      
+      if (minute < 0 || minute > 59) {
+        logger.warn(`⚠️  Invalid minute extracted: ${minute} from timestamp ${timestamp}`);
+        return;
+      }
+      
+      if (!hourlyRTData[pacificHour]) {
+        hourlyRTData[pacificHour] = [];
+      }
+      
+      hourlyRTData[pacificHour].push({
+        interval: Math.floor(minute / 15), // 15-minute intervals
+        price,
+        timestamp,
+        minute
+      });
+    } catch (error) {
+      logger.warn(`⚠️  Error processing RT item ${index}: ${error.message}`);
     }
   });
   
@@ -209,12 +257,18 @@ export const transformGridStatusData = (dayAheadData, realTimeData, userTimezone
     let pacificHour = userHour;
     if (date && userTimezone !== 'America/Los_Angeles') {
       try {
-        const timezoneOffset = new Date().getTimezoneOffset() / 60;
-        const pacificOffset = 8;
-        const userOffset = new Date().toLocaleString('en', {timeZone: userTimezone}).includes('GMT') ? 0 : timezoneOffset;
-        pacificHour = (userHour + (pacificOffset - userOffset) + 24) % 24;
+        // More robust timezone conversion using actual date
+        const testDate = new Date(`${date}T${userHour.toString().padStart(2, '0')}:00:00`);
+        const userTime = new Date(testDate.toLocaleString('en-US', { timeZone: userTimezone }));
+        const pacificTime = new Date(testDate.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+        
+        // Calculate hour difference
+        const hourDiff = Math.round((userTime.getTime() - pacificTime.getTime()) / (1000 * 60 * 60));
+        pacificHour = (userHour - hourDiff + 24) % 24;
       } catch (error) {
         logger.warn(`⚠️  RT Timezone conversion error for hour ${userHour}: ${error.message}`);
+        // Fallback to no conversion if timezone parsing fails
+        pacificHour = userHour;
       }
     }
     

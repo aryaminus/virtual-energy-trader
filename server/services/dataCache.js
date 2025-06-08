@@ -76,12 +76,31 @@ class DataCache {
       return null;
     }
     
-    // Update access statistics
-    cached.accessCount++;
-    cached.lastAccessed = Date.now();
-    
-    this.stats.hits++;
-    return cached.data;
+    // Validate cached data integrity
+    try {
+      if (cached.data === null || cached.data === undefined) {
+        this.cache.delete(key);
+        this.stats.misses++;
+        this.stats.deletes++;
+        return null;
+      }
+      
+      // Try to serialize and parse to detect corruption
+      JSON.stringify(cached.data);
+      
+      // Update access statistics
+      cached.accessCount++;
+      cached.lastAccessed = Date.now();
+      
+      this.stats.hits++;
+      return cached.data;
+    } catch (error) {
+      // Cache corruption detected - remove corrupted entry
+      this.cache.delete(key);
+      this.stats.misses++;
+      this.stats.deletes++;
+      return null;
+    }
   }
 
   /**
