@@ -1,6 +1,4 @@
 import { getDataCache } from '../config/services.js';
-// For Netlify Functions, import from netlify services
-import { getNetlifyDataCache } from '../config/netlifyServices.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -9,8 +7,7 @@ import { logger } from '../utils/logger.js';
  * @param {import('express').Response} res - Express response object
  */
 export const getCacheStats = (req, res) => {
-  // Use Netlify service getters if available, fallback to regular ones
-  const dataCache = getNetlifyDataCache() || getDataCache();
+  const dataCache = getDataCache();
   
   const stats = {
     size: dataCache?.size() || 0,
@@ -29,8 +26,7 @@ export const getCacheStats = (req, res) => {
  * @param {import('express').Response} res - Express response object
  */
 export const clearCache = (req, res) => {
-  // Use Netlify service getters if available, fallback to regular ones
-  const dataCache = getNetlifyDataCache() || getDataCache();
+  const dataCache = getDataCache();
   
   const previousSize = dataCache?.size() || 0;
   dataCache?.clear();

@@ -1,6 +1,4 @@
 import { getGridStatusClient, getDataCache } from '../config/services.js';
-// For Netlify Functions, import from netlify services
-import { getNetlifyGridStatusClient, getNetlifyDataCache } from '../config/netlifyServices.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -9,8 +7,8 @@ import { logger } from '../utils/logger.js';
  * @param {import('express').Response} res - Express response object
  */
 export const getHealthStatus = (req, res) => {
-  const gridStatusClient =  getNetlifyGridStatusClient() || getGridStatusClient();
-  const dataCache =  getNetlifyDataCache() || getDataCache();
+  const gridStatusClient = getGridStatusClient();
+  const dataCache = getDataCache();
   
   const healthData = {
     status: 'healthy',

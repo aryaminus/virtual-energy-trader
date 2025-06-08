@@ -4,56 +4,22 @@ import { getAIProviders, analyzeSpikes, performAIAnalysis } from "../../server/c
 import { getHealthStatus } from "../../server/controllers/healthController.js";
 import { getCacheStats, clearCache } from "../../server/controllers/cacheController.js";
 
-// Import services and utilities
-import GridStatusClient from "../../server/services/gridstatus.js";
-import DataCache from "../../server/services/dataCache.js";
-import SpikeAnalyzer from "../../server/services/spikeAnalyzer.js";
-import { setNetlifyServices } from "../../server/config/netlifyServices.js";
+// Import unified services
+import { initializeServices } from "../../server/config/services.js";
 import { logger } from "../../server/utils/logger.js";
 import { ApiError } from "../../server/utils/errors.js";
 
-// Import middleware
-import { 
-  validateDateParam, 
-  validateISOQuery, 
-  validateTradeSimulation,
-  validateSpikeAnalysis,
-  validateAIAnalysis 
-} from "../../server/middleware/validation.js";
-
-// Initialize services
-let gridStatusClient = null;
-let dataCache = null;
-let spikeAnalyzer = null;
+// Services initialization flag
 let servicesInitialized = false;
 
-const initializeServices = () => {
+const initializeNetlifyServices = async () => {
   if (servicesInitialized) return;
   
   try {
     logger.info('🔧 Initializing services for Netlify...');
-
-    // Initialize GridStatus client
-    if (Netlify.env.get('GRIDSTATUS_API_KEY')) {
-      gridStatusClient = new GridStatusClient(Netlify.env.get('GRIDSTATUS_API_KEY'));
-      logger.info('✅ GridStatus client initialized');
-    } else {
-      logger.warn('⚠️  GridStatus API key not configured');
-    }
-
-    // Initialize data cache
-    dataCache = new DataCache(60); // 60-minute cache
-    logger.info('✅ Data cache initialized');
-
-    // Initialize spike analyzer
-    spikeAnalyzer = new SpikeAnalyzer();
-    logger.info('✅ Spike analyzer initialized');
-
-    // Set services for controllers to use
-    setNetlifyServices(gridStatusClient, dataCache, spikeAnalyzer);
-
+    await initializeServices();
     servicesInitialized = true;
-    logger.info('🎉 All services initialized successfully');
+    logger.info('🎉 All services initialized successfully for Netlify');
   } catch (error) {
     logger.error('❌ Failed to initialize services:', error);
     throw error;
@@ -93,7 +59,7 @@ const handleRoute = async (request, context) => {
   
   // Initialize services
   try {
-    initializeServices();
+    await initializeNetlifyServices();
   } catch (error) {
     logger.error('❌ Failed to initialize services:', error);
     return createResponse(500, {

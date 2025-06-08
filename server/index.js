@@ -14,7 +14,7 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
  */
 const startServer = async () => {
   try {
-    // Initialize services
+    // Initialize services with unified approach
     await initializeServices();
     
     // Create Express app

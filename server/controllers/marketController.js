@@ -1,5 +1,4 @@
 import { getGridStatusClient, getDataCache } from '../config/services.js';
-import { getNetlifyGridStatusClient, getNetlifyDataCache } from '../config/netlifyServices.js';
 import { transformGridStatusData } from '../utils/marketData.js';
 import { logger } from '../utils/logger.js';
 import { ApiError } from '../utils/errors.js';
@@ -13,11 +12,11 @@ const CACHE_KEY_MARKET_DATA = 'market-data';
 const CACHE_KEY_DATASETS = 'datasets';
 
 /**
- * Service getter utilities for Netlify/regular environment compatibility
+ * Service getter utilities using unified services
  */
 const getServices = () => ({
-  gridStatusClient: getNetlifyGridStatusClient() || getGridStatusClient(),
-  dataCache: getNetlifyDataCache() || getDataCache()
+  gridStatusClient: getGridStatusClient(),
+  dataCache: getDataCache()
 });
 
 /**

@@ -151,25 +151,3 @@ export const validateAIAnalysis = (req, res, next) => {
   next();
 };
 
-/**
- * Generic request validation middleware
- * @param {Object} schema - Validation schema
- * @returns {Function} Middleware function
- */
-export const validateRequest = (schema) => {
-  return (req, res, next) => {
-    try {
-      const { error, value } = schema.validate(req.body);
-      
-      if (error) {
-        logger.warn('🚫 Validation failed:', error.details);
-        return next(new ApiError('Validation failed', 400, error.details[0].message));
-      }
-      
-      req.body = value;
-      next();
-    } catch (err) {
-      next(new ApiError('Validation error', 500, err.message));
-    }
-  };
-};

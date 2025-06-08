@@ -1,17 +1,15 @@
-import { getSpikeAnalyzer } from '../config/services.js';
-import { getNetlifySpikeAnalyzer, getNetlifyGridStatusClient } from '../config/netlifyServices.js';
+import { getSpikeAnalyzer, getGridStatusClient } from '../config/services.js';
 import { getAvailableProviders } from '../services/llmClient.js';
-import { getGridStatusClient } from '../config/services.js';
 import { transformGridStatusRawToSpikeAnalysisFormat } from '../utils/marketData.js';
 import { logger } from '../utils/logger.js';
 import { ApiError } from '../utils/errors.js';
 
 /**
- * Service getter utilities for Netlify/regular environment compatibility
+ * Service getter utilities using unified services
  */
 const getServices = () => ({
-  spikeAnalyzer: getNetlifySpikeAnalyzer() || getSpikeAnalyzer(),
-  gridStatusClient: getNetlifyGridStatusClient() || getGridStatusClient()
+  spikeAnalyzer: getSpikeAnalyzer(),
+  gridStatusClient: getGridStatusClient()
 });
 
 /**

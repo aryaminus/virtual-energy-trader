@@ -5,7 +5,6 @@ import compression from 'compression';
 
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
-import { validateRequest } from './middleware/validation.js';
 
 // Import route modules
 import marketRoutes from './routes/market.js';
