@@ -49,6 +49,7 @@ This is a React + Express.js application that simulates energy trading using rea
 ### Unified Deployment Architecture
 - **Unified Services**: Single `server/config/services.js` handles both development and production environments
 - **Unified Routing**: Same Express app, routes, middleware, and controllers work in both environments
+- **Unified Environment Variables**: Standard `process.env` used consistently (per Netlify Functions documentation)
 - **Environment Detection**: Automatically detects Express vs Netlify Functions environment
 - **Local Development**: Uses Vite proxy (`/api` → `http://localhost:3001`) with full Express server
 - **Netlify Production**: Same Express app wrapped with official `serverless-http` package at `/.netlify/functions/api`
@@ -57,6 +58,8 @@ This is a React + Express.js application that simulates energy trading using rea
 - **Zero Duplication**: Identical routing logic, middleware, validation, and error handling across environments
 
 ## Environment Variables
+
+**Note**: Both development and production environments use standard `process.env` for accessing environment variables, following Netlify Functions documentation.
 
 **Required:**
 - `GRIDSTATUS_API_KEY` - GridStatus.io API key for real CAISO market data

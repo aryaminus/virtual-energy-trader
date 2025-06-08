@@ -11,35 +11,21 @@ let servicesInitialized = false;
 let environmentType = null;
 
 /**
- * Detect environment type based on available globals
+ * Detect environment type based on context
  * @returns {'express'|'netlify'} Environment type
  */
 export const getEnvironmentType = () => {
   if (environmentType !== null) return environmentType;
   
   // Check if we're in a Netlify Functions environment
-  if (typeof Netlify !== 'undefined' && Netlify.env) {
+  // Since Netlify Functions use process.env (like regular Node.js), we detect by other means
+  if (process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME) {
     environmentType = 'netlify';
   } else {
     environmentType = 'express';
   }
   
   return environmentType;
-};
-
-/**
- * Get environment variable based on context
- * @param {string} key - Environment variable key
- * @returns {string|undefined} Environment variable value
- */
-const getEnvVar = (key) => {
-  const envType = getEnvironmentType();
-  
-  if (envType === 'netlify' && typeof Netlify !== 'undefined') {
-    return Netlify.env.get(key);
-  } else {
-    return process.env[key];
-  }
 };
 
 /**
@@ -53,7 +39,8 @@ export const initializeServices = async () => {
     logger.info(`🔧 Initializing services for ${envType} environment...`);
 
     // Initialize GridStatus client
-    const apiKey = getEnvVar('GRIDSTATUS_API_KEY');
+    // Both Express and Netlify Functions use process.env according to Netlify docs
+    const apiKey = process.env.GRIDSTATUS_API_KEY;
     if (apiKey) {
       gridStatusClient = new GridStatusClient(apiKey);
       logger.info('✅ GridStatus client initialized');
