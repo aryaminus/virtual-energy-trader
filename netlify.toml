@@ -5,7 +5,7 @@
   command = "npm run build"
 
 [functions]
-  external_node_modules = ["express", "axios", "@langchain/anthropic", "@langchain/community", "@langchain/core", "@langchain/google-genai", "@langchain/openai", "cors", "helmet", "compression", "dotenv"]
+  external_node_modules = ["express", "serverless-http", "axios", "@langchain/anthropic", "@langchain/community", "@langchain/core", "@langchain/google-genai", "@langchain/openai", "cors", "helmet", "compression", "dotenv"]
   node_bundler = "esbuild"
   directory = "netlify/functions"
 

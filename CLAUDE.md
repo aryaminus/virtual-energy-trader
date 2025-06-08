@@ -51,7 +51,8 @@ This is a React + Express.js application that simulates energy trading using rea
 - **Unified Routing**: Same Express app, routes, middleware, and controllers work in both environments
 - **Environment Detection**: Automatically detects Express vs Netlify Functions environment
 - **Local Development**: Uses Vite proxy (`/api` → `http://localhost:3001`) with full Express server
-- **Netlify Production**: Same Express app wrapped as serverless function at `/.netlify/functions/api`
+- **Netlify Production**: Same Express app wrapped with official `serverless-http` package at `/.netlify/functions/api`
+- **Official Integration**: Uses Netlify's recommended `serverless-http` approach for maximum compatibility
 - **Configuration**: `netlify.toml` handles routing and redirects
 - **Zero Duplication**: Identical routing logic, middleware, validation, and error handling across environments
 
