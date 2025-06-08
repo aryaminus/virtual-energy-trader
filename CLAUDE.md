@@ -48,11 +48,12 @@ This is a React + Express.js application that simulates energy trading using rea
 
 ### Unified Deployment Architecture
 - **Unified Services**: Single `server/config/services.js` handles both development and production environments
+- **Unified Routing**: Same Express app, routes, middleware, and controllers work in both environments
 - **Environment Detection**: Automatically detects Express vs Netlify Functions environment
-- **Local Development**: Uses Vite proxy (`/api` → `http://localhost:3001`)
-- **Netlify Production**: Express app runs as serverless function at `/.netlify/functions/api`
+- **Local Development**: Uses Vite proxy (`/api` → `http://localhost:3001`) with full Express server
+- **Netlify Production**: Same Express app wrapped as serverless function at `/.netlify/functions/api`
 - **Configuration**: `netlify.toml` handles routing and redirects
-- **No Duplication**: Same service initialization logic works for both environments
+- **Zero Duplication**: Identical routing logic, middleware, validation, and error handling across environments
 
 ## Environment Variables
 

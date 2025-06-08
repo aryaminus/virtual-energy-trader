@@ -1,419 +1,290 @@
-import { getMarketData, getAvailableDatasets } from "../../server/controllers/marketController.js";
-import { simulateTrades } from "../../server/controllers/tradingController.js";
-import { getAIProviders, analyzeSpikes, performAIAnalysis } from "../../server/controllers/analysisController.js";
-import { getHealthStatus } from "../../server/controllers/healthController.js";
-import { getCacheStats, clearCache } from "../../server/controllers/cacheController.js";
-
-// Import unified services
+import { createApp } from "../../server/app.js";
 import { initializeServices } from "../../server/config/services.js";
 import { logger } from "../../server/utils/logger.js";
-import { ApiError } from "../../server/utils/errors.js";
 
-// Services initialization flag
+// Cache the Express app instance
+let expressApp = null;
 let servicesInitialized = false;
 
-const initializeNetlifyServices = async () => {
-  if (servicesInitialized) return;
+/**
+ * Initialize Express app for Netlify (cached)
+ */
+const getExpressApp = async () => {
+  if (expressApp && servicesInitialized) {
+    return expressApp;
+  }
   
   try {
-    logger.info('🔧 Initializing services for Netlify...');
+    logger.info('🔧 Initializing Express app for Netlify...');
+    
+    // Initialize services first
     await initializeServices();
+    
+    // Create Express app
+    expressApp = createApp();
     servicesInitialized = true;
-    logger.info('🎉 All services initialized successfully for Netlify');
+    
+    logger.info('🎉 Express app ready for Netlify');
+    return expressApp;
   } catch (error) {
-    logger.error('❌ Failed to initialize services:', error);
+    logger.error('❌ Failed to initialize Express app for Netlify:', error);
     throw error;
   }
 };
 
-// Helper function to parse request body
-const parseBody = async (request) => {
-  if (!request.body) return {};
-  try {
-    const text = await request.text();
-    return text ? JSON.parse(text) : {};
-  } catch (error) {
-    throw new ApiError('Invalid JSON in request body', 400);
+/**
+ * Convert Netlify Request to Node.js request-like object
+ */
+const createNodeRequest = async (netlifyRequest) => {
+  const url = new URL(netlifyRequest.url);
+  
+  // Parse body for non-GET requests
+  let body = '';
+  if (netlifyRequest.method !== 'GET' && netlifyRequest.body) {
+    try {
+      body = await netlifyRequest.text();
+    } catch (error) {
+      body = '';
+    }
   }
+  
+  // Create Node.js-style request object
+  const req = {
+    method: netlifyRequest.method,
+    url: url.pathname + url.search,
+    headers: Object.fromEntries(netlifyRequest.headers.entries()),
+    body,
+    // Express-specific properties
+    path: url.pathname,
+    query: Object.fromEntries(url.searchParams),
+    params: {},
+    ip: netlifyRequest.headers.get('x-forwarded-for') || '127.0.0.1',
+    hostname: url.hostname,
+    protocol: url.protocol.replace(':', ''),
+    originalUrl: url.pathname + url.search,
+    get: function(header) {
+      return this.headers[header.toLowerCase()];
+    }
+  };
+
+  // If there's a body, parse it as JSON for Express
+  if (body && netlifyRequest.headers.get('content-type')?.includes('application/json')) {
+    try {
+      req.body = JSON.parse(body);
+    } catch (error) {
+      req.body = {};
+    }
+  }
+
+  return req;
 };
 
-// Helper function to create response
-const createResponse = (statusCode, body, headers = {}) => {
-  return new Response(JSON.stringify(body), {
-    status: statusCode,
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      ...headers,
-    },
-  });
-};
+/**
+ * Create Node.js response-like object that captures Express output
+ */
+const createNodeResponse = () => {
+  let statusCode = 200;
+  let headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS'
+  };
+  let body = '';
+  let finished = false;
 
-// Route handler
-const handleRoute = async (request, context) => {
-  const url = new URL(request.url);
-  const method = request.method;
-  const pathname = url.pathname;
-  
-  // Initialize services
-  try {
-    await initializeNetlifyServices();
-  } catch (error) {
-    logger.error('❌ Failed to initialize services:', error);
-    return createResponse(500, {
-      success: false,
-      error: 'Service initialization failed',
-      details: error.message
-    });
-  }
-
-  // Handle CORS preflight
-  if (method === 'OPTIONS') {
-    return createResponse(200, {});
-  }
-
-  // Parse the path - handle both direct function calls and redirected API calls
-  let pathToProcess = pathname;
-  
-  // Remove function path prefix if present
-  if (pathToProcess.startsWith('/.netlify/functions/api')) {
-    pathToProcess = pathToProcess.replace('/.netlify/functions/api', '');
-  }
-  
-  // Remove leading /api if present (from redirect)
-  if (pathToProcess.startsWith('/api')) {
-    pathToProcess = pathToProcess.replace('/api', '');
-  }
-  
-  // Ensure we start with a clean path
-  if (!pathToProcess.startsWith('/')) {
-    pathToProcess = '/' + pathToProcess;
-  }
-  
-  const pathParts = pathToProcess.split('/').filter(Boolean);
-  const [resource, action, param] = pathParts;
-
-  logger.info(`🔍 Processing route: ${method} ${pathname} -> ${pathToProcess} -> [${pathParts.join(', ')}]`);
-
-  try {
-    // Create mock request and response objects for existing controllers
-    const req = {
-      method,
-      url: pathname,
-      params: {},
-      query: Object.fromEntries(url.searchParams),
-      body: method !== 'GET' ? await parseBody(request) : {},
-      ip: request.headers.get('x-forwarded-for') || 'unknown',
-      get: (header) => request.headers.get(header.toLowerCase()),
-    };
-
-    // Set params based on path
-    if (action === 'data' && param) {
-      req.params.date = param;
-    } else if (action === 'spikes' && param) {
-      req.params.date = param;
-    }
-
-    // Route handling with proper async/await
-    switch (resource) {
-      case '':
-      case undefined:
-        // Root API route
-        return createResponse(200, {
-          success: true,
-          name: 'Virtual Energy Trader API',
-          version: '1.0.0',
-          status: 'running',
-          platform: 'Netlify Functions',
-          endpoints: {
-            health: '/api/health',
-            market: '/api/market',
-            trading: '/api/trading',
-            analysis: '/api/analysis',
-            cache: '/api/cache'
-          }
-        });
-
-      case 'health':
-        try {
-          // Create a promise-based response handler
-          const result = await new Promise((resolve, reject) => {
-            const res = {
-              json: (data) => resolve(data)
-            };
-            getHealthStatus(req, res);
-          });
-          return createResponse(200, { success: true, ...result });
-        } catch (error) {
-          logger.error('❌ Health check error:', error);
-          return createResponse(500, {
-            success: false,
-            error: 'Health check failed',
-            details: error.message
-          });
-        }
-
-      case 'market':
-        if (action === 'data' && param) {
-          // Validate date parameter
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(param)) {
-            return createResponse(400, {
-              success: false,
-              error: 'Invalid date format. Expected YYYY-MM-DD'
-            });
-          }
-          
-          try {
-            const result = await new Promise((resolve, reject) => {
-              const res = {
-                json: (data) => resolve(data)
-              };
-              getMarketData(req, res, reject);
-            });
-            return createResponse(200, { success: true, ...result });
-          } catch (error) {
-            logger.error('❌ Market data error:', error);
-            if (error instanceof ApiError) {
-              return createResponse(error.statusCode, {
-                success: false,
-                error: error.message,
-                details: error.details
-              });
-            }
-            return createResponse(500, {
-              success: false,
-              error: 'Internal server error',
-              details: error.message
-            });
-          }
-        } else if (action === 'datasets') {
-          try {
-            const result = await new Promise((resolve, reject) => {
-              const res = {
-                json: (data) => resolve(data)
-              };
-              getAvailableDatasets(req, res, reject);
-            });
-            return createResponse(200, { success: true, ...result });
-          } catch (error) {
-            logger.error('❌ Datasets error:', error);
-            if (error instanceof ApiError) {
-              return createResponse(error.statusCode, {
-                success: false,
-                error: error.message
-              });
-            }
-            return createResponse(500, {
-              success: false,
-              error: 'Internal server error',
-              details: error.message
-            });
-          }
-        }
-        break;
-
-      case 'trading':
-        if (action === 'simulate' && method === 'POST') {
-          try {
-            // Validate request body
-            if (!req.body.bids || !Array.isArray(req.body.bids) || req.body.bids.length === 0) {
-              return createResponse(400, {
-                success: false,
-                error: 'Bids array is required and must not be empty'
-              });
-            }
-            
-            if (!req.body.date) {
-              return createResponse(400, {
-                success: false,
-                error: 'Date is required'
-              });
-            }
-            
-            logger.info(`🎯 Processing trading simulation for ${req.body.bids.length} bids on ${req.body.date}`);
-            
-            const result = await new Promise((resolve, reject) => {
-              const res = {
-                json: (data) => resolve(data)
-              };
-              simulateTrades(req, res, reject);
-            });
-            
-            logger.info(`✅ Trading simulation completed successfully`);
-            return createResponse(200, { success: true, ...result });
-          } catch (error) {
-            logger.error('❌ Trading simulation error:', error);
-            if (error instanceof ApiError) {
-              return createResponse(error.statusCode, {
-                success: false,
-                error: error.message,
-                details: error.details
-              });
-            }
-            return createResponse(500, {
-              success: false,
-              error: 'Trading simulation failed',
-              details: error.message
-            });
-          }
-        }
-        break;
-
-      case 'analysis':
-        if (action === 'ai-providers') {
-          try {
-            const result = await new Promise((resolve, reject) => {
-              const res = {
-                json: (data) => resolve(data)
-              };
-              getAIProviders(req, res, reject);
-            });
-            return createResponse(200, { success: true, ...result });
-          } catch (error) {
-            logger.error('❌ AI providers error:', error);
-            if (error instanceof ApiError) {
-              return createResponse(error.statusCode, {
-                success: false,
-                error: error.message
-              });
-            }
-            return createResponse(500, {
-              success: false,
-              error: 'Internal server error',
-              details: error.message
-            });
-          }
-        } else if (action === 'spikes' && param && method === 'POST') {
-          try {
-            const result = await new Promise((resolve, reject) => {
-              const res = {
-                json: (data) => resolve(data)
-              };
-              analyzeSpikes(req, res, reject);
-            });
-            return createResponse(200, { success: true, ...result });
-          } catch (error) {
-            logger.error('❌ Spike analysis error:', error);
-            if (error instanceof ApiError) {
-              return createResponse(error.statusCode, {
-                success: false,
-                error: error.message
-              });
-            }
-            return createResponse(500, {
-              success: false,
-              error: 'Internal server error',
-              details: error.message
-            });
-          }
-        } else if (action === 'ai' && method === 'POST') {
-          try {
-            const result = await new Promise((resolve, reject) => {
-              const res = {
-                json: (data) => resolve(data)
-              };
-              performAIAnalysis(req, res, reject);
-            });
-            return createResponse(200, { success: true, ...result });
-          } catch (error) {
-            logger.error('❌ AI analysis error:', error);
-            if (error instanceof ApiError) {
-              return createResponse(error.statusCode, {
-                success: false,
-                error: error.message
-              });
-            }
-            return createResponse(500, {
-              success: false,
-              error: 'Internal server error',
-              details: error.message
-            });
-          }
-        }
-        break;
-
-      case 'cache':
-        if (action === 'stats') {
-          try {
-            const result = getCacheStats(req, { json: (data) => data });
-            return createResponse(200, { success: true, ...result });
-          } catch (error) {
-            logger.error('❌ Cache stats error:', error);
-            return createResponse(500, {
-              success: false,
-              error: 'Cache stats failed',
-              details: error.message
-            });
-          }
-        } else if (method === 'DELETE') {
-          try {
-            const result = clearCache(req, { json: (data) => data });
-            return createResponse(200, { success: true, ...result });
-          } catch (error) {
-            logger.error('❌ Cache clear error:', error);
-            return createResponse(500, {
-              success: false,
-              error: 'Cache clear failed',
-              details: error.message
-            });
-          }
-        }
-        break;
-
-      default:
-        logger.warn(`🔍 Route not found: ${resource} (from ${pathToProcess})`);
-        return createResponse(404, {
-          success: false,
-          error: 'Route not found',
-          details: `The requested endpoint ${method} ${pathname} does not exist`,
-          debug: {
-            originalPath: pathname,
-            processedPath: pathToProcess,
-            pathParts: pathParts,
-            resource: resource,
-            action: action,
-            param: param
-          }
-        });
-    }
-
-    return createResponse(404, {
-      success: false,
-      error: 'Route not found',
-      details: `No handler found for ${method} ${pathname}`
-    });
-
-  } catch (error) {
-    logger.error('❌ Request error:', error);
+  const res = {
+    statusCode,
+    headersSent: false,
     
-    if (error instanceof ApiError) {
-      return createResponse(error.statusCode, {
-        success: false,
-        error: error.message,
-        details: error.details
+    status(code) {
+      statusCode = code;
+      return this;
+    },
+    
+    set(field, value) {
+      if (typeof field === 'object') {
+        Object.assign(headers, field);
+      } else {
+        headers[field] = value;
+      }
+      return this;
+    },
+    
+    header(field, value) {
+      return this.set(field, value);
+    },
+    
+    // Express-specific methods
+    setHeader(name, value) {
+      headers[name] = value;
+    },
+    
+    getHeader(name) {
+      return headers[name];
+    },
+    
+    removeHeader(name) {
+      delete headers[name];
+    },
+    
+    writeHead(statusCode, reasonPhrase, headers) {
+      this.statusCode = statusCode;
+      if (typeof reasonPhrase === 'object') {
+        // reasonPhrase is actually headers
+        Object.assign(this.headers, reasonPhrase);
+      } else if (headers) {
+        Object.assign(this.headers, headers);
+      }
+    },
+    
+    write(chunk) {
+      body += String(chunk);
+    },
+    
+    json(data) {
+      this.set('Content-Type', 'application/json');
+      body = JSON.stringify(data);
+      this.end();
+    },
+    
+    send(data) {
+      if (typeof data === 'object') {
+        this.json(data);
+      } else {
+        body = String(data);
+        this.end();
+      }
+    },
+    
+    end(data) {
+      if (data !== undefined) {
+        body = String(data);
+      }
+      finished = true;
+      
+      // Create and resolve with Web Response
+      const response = new Response(body, {
+        status: statusCode,
+        headers
+      });
+      
+      if (this._resolve) {
+        this._resolve(response);
+      }
+    },
+    
+    // Express middleware compatibility
+    locals: {},
+    
+    // Event emitter methods (minimal implementation)
+    on() {},
+    once() {},
+    emit() {},
+    
+    // Check if response is finished
+    get finished() {
+      return finished;
+    }
+  };
+
+  return res;
+};
+
+/**
+ * Main Netlify Function handler
+ */
+export default async (request, _context) => {
+  try {
+    // Handle CORS preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS'
+        }
       });
     }
 
-    return createResponse(500, {
-      success: false,
-      error: 'Internal server error',
-      details: Netlify.env.get('NODE_ENV') !== 'production' ? error.message : undefined
-    });
-  }
-};
+    // Get Express app
+    const app = await getExpressApp();
+    
+    // Convert Netlify request/response to Express format
+    const req = await createNodeRequest(request);
+    const res = createNodeResponse();
+    
+    // Handle the request with Express
+    return new Promise((resolve, _reject) => {
+      // Store resolve function for response handling
+      res._resolve = resolve;
+      
+      // Set up timeout (Netlify has 10s limit for functions)
+      const timeout = setTimeout(() => {
+        if (!res.finished) {
+          logger.warn('⚠️ Request timeout in Netlify function');
+          resolve(new Response(JSON.stringify({
+            success: false,
+            error: 'Request timeout'
+          }), {
+            status: 504,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          }));
+        }
+      }, 9000); // 9 second timeout (leave 1s buffer)
+      
+      // Override resolve to clear timeout
+      const originalResolve = res._resolve;
+      res._resolve = (response) => {
+        clearTimeout(timeout);
+        originalResolve(response);
+      };
+      
+      // Error handler
+      const errorHandler = (error) => {
+        clearTimeout(timeout);
+        logger.error('❌ Express error in Netlify function:', error);
+        
+        if (!res.finished) {
+          resolve(new Response(JSON.stringify({
+            success: false,
+            error: 'Internal server error',
+            details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+          }), {
+            status: 500,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          }));
+        }
+      };
 
-// Main Netlify Function handler
-export default async (request, context) => {
-  try {
-    return await handleRoute(request, context);
+      try {
+        // Process request through Express app
+        app(req, res, errorHandler);
+      } catch (error) {
+        errorHandler(error);
+      }
+    });
+
   } catch (error) {
-    logger.error('❌ Function error:', error);
-    return createResponse(500, {
+    logger.error('❌ Netlify function error:', error);
+    
+    return new Response(JSON.stringify({
       success: false,
-      error: 'Function execution failed',
-      details: error.message
+      error: 'Function initialization failed',
+      details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+    }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      }
     });
   }
 };
