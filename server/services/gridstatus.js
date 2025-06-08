@@ -365,7 +365,7 @@ class GridStatusClient {
           params: {
             start_time: startTime,
             end_time: endTime,
-            page_size: type === 'day-ahead' ? 50 : 100,
+            page_size: type === 'day-ahead' ? 150 : 50,
             timezone: timezone
           }
         });
