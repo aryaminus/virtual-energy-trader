@@ -59,11 +59,11 @@ The analysis section was fairly autonomous, with some bug-squashing done by Bolt
 
 ## Timezone Feature
 
-The client sends the timezone information which is used by the server to convert the date into client's local timezone. The original plan was to use just use client timezone to request grid-status, but Pacific Time is used as fallback in server for CAISO consistency
+The client sends the timezone information which is used by the server to convert the date into client's local timezone. The original plan was to use just use client timezone to request grid-status, but Pacific Time is used as fallback in server for CAISO consistency.
 
-## Reside Feature
+## Residual Feature
 
-There are some residual code that were refactored or left because they have potential to be reused. This is primarily because we didn't use github from start and don't have git to go back to and thus just left as is, unused, alone.
+There are some residual code that were refactored or left because they have potential to be reused. This is primarily because I didn't use github from start and don't have git to go back to and thus just left as is, unused, alone.
 
 ## Code Refactoring
 
