@@ -117,14 +117,27 @@ const getCachedMarketData = (dataCache, date, iso, userTimezone) => {
 };
 
 /**
- * Cache market data for future requests
+ * Cache market data for future requests with validation
  */
 const cacheMarketData = (dataCache, date, iso, userTimezone, marketData) => {
   if (!dataCache) return;
   
-  const { key, params } = createCacheKey(date, iso, userTimezone);
-  dataCache.set(key, params, marketData);
-  logger.info(`💾 Cached market data for ${date} (${iso}) in ${userTimezone}`);
+  try {
+    // Validate data before caching
+    if (!marketData || !marketData.dayAheadPrices || !marketData.realTimePrices) {
+      logger.warn(`⚠️  Skipping cache for ${date}: invalid market data structure`);
+      return;
+    }
+    
+    // Validate data integrity by serializing
+    JSON.stringify(marketData);
+    
+    const { key, params } = createCacheKey(date, iso, userTimezone);
+    dataCache.set(key, params, marketData);
+    logger.info(`💾 Cached market data for ${date} (${iso}) in ${userTimezone}`);
+  } catch (error) {
+    logger.error(`❌ Failed to cache market data for ${date}: ${error.message}`);
+  }
 };
 
 /**
