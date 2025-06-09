@@ -140,7 +140,6 @@ Each major directory contains detailed README files explaining the architecture 
 - `src/hooks/README.md` - Custom React hooks
 - `src/lib/README.md` - Utility libraries and API client
 - `src/pages/README.md` - Top-level page components
-- `src/types/README.md` - TypeScript type definitions
 
 **Component Subdirectories:**
 
