@@ -43,7 +43,7 @@ Connecting the APIs and dropping the mock data seemed straightforward, but I enc
 2. **Rate Limit Management**: I cached the dataset and tracked last request times to maintain intervals between requests
 3. **Backoff Strategy**: I implemented a simple backoff-time approach instead of over-engineering with queuing or circuit breaker logic
 
-The responses were limited, so to avoid exceeding limits, I decided to use interpolated and fallback hours with actual hours at fixed prices.
+The responses were limited, so to avoid exceeding limits, I decided to use interpolated and fallback hours with actual hours at fixed prices. There is also a chance that my implementation is incorrect as a thorough understanding test of the data from GridStatus was not conducted.
 
 ## Frontend Data Integration
 
@@ -59,7 +59,7 @@ The analysis section was fairly autonomous, with some bug-squashing done by Bolt
 
 ## Timezone Feature
 
-The client sends the timezone information which is used by the server to convert the date into client's local timezone. The original plan was to use just use client timezone to request grid-status, but Pacific Time is used as fallback in server for CAISO consistency.
+The client sends the timezone information which is used by the server to convert the date into client's local timezone. The original plan was to use just use client timezone to request GridStatus, but Pacific Time is used as fallback in server for CAISO consistency.
 
 ## Residual Feature
 
