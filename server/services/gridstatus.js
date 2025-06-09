@@ -13,24 +13,12 @@ class GridStatusClient {
     this.baseURL = process.env.GRIDSTATUS_BASE_URL || 'https://api.gridstatus.io';
     this.timezone = 'America/Los_Angeles'; // CAISO operates in Pacific Time
     
-    // Rate limiting configuration - Optimized for Netlify's 10s limit
-    this.requestQueue = [];
-    this.isProcessingQueue = false;
-    this.lastRequestTime = Date.now();
-    this.minRequestInterval = 2000; // 2 seconds - aggressive but should avoid 429s
-    this.requestTimeout = 4000; // 4 seconds max per request for Netlify constraints
+    // Simple rate limiting - 1 request per 2 seconds (GridStatus limit is 1/sec)
+    this.lastRequestTime = 0;
+    this.minRequestInterval = 2000; // 2 seconds for safety margin
     
     // Cache configuration using shared DataCache
     this.datasetsCache = new DataCache(240); // 4 hours in minutes
-    
-    // Circuit breaker for handling consecutive failures - faster recovery for Netlify
-    this.circuitBreaker = {
-      failureCount: 0,
-      lastFailureTime: 0,
-      maxFailures: 2, // Faster failure detection
-      timeoutPeriod: 60 * 1000, // 1 minute recovery for faster turnaround
-      isOpen: false
-    };
     
     this.client = this.createAxiosClient();
   }
@@ -46,7 +34,7 @@ class GridStatusClient {
         'Content-Type': 'application/json',
         'User-Agent': 'VirtualEnergyTrader/1.0.0'
       },
-      timeout: 3500 // Reduced for Netlify constraints
+      timeout: 8000 // 8 seconds for Netlify 10s limit
     });
 
     // Request interceptor
@@ -120,137 +108,62 @@ class GridStatusClient {
     return true;
   }
 
-  /**
-   * Check circuit breaker status
-   */
-  isCircuitOpen() {
-    const now = Date.now();
-    
-    if (this.circuitBreaker.isOpen) {
-      if (now - this.circuitBreaker.lastFailureTime > this.circuitBreaker.timeoutPeriod) {
-        // Reset circuit breaker after timeout period
-        this.circuitBreaker.isOpen = false;
-        this.circuitBreaker.failureCount = 0;
-        logger.info('🔄 Circuit breaker reset - attempting requests again');
-        return false;
-      }
-      return true;
-    }
-    
-    return false;
-  }
 
   /**
-   * Record success for circuit breaker
-   */
-  recordSuccess() {
-    if (this.circuitBreaker.failureCount > 0) {
-      this.circuitBreaker.failureCount = 0;
-      logger.info('✅ Circuit breaker: recording success, reset failure count');
-    }
-  }
-
-  /**
-   * Record failure for circuit breaker
-   */
-  recordFailure() {
-    this.circuitBreaker.failureCount++;
-    this.circuitBreaker.lastFailureTime = Date.now();
-    
-    if (this.circuitBreaker.failureCount >= this.circuitBreaker.maxFailures) {
-      this.circuitBreaker.isOpen = true;
-      logger.warn(`⚠️  Circuit breaker opened due to ${this.circuitBreaker.failureCount} consecutive failures`);
-    }
-  }
-
-  /**
-   * Rate-limited request wrapper using queue system with timeout handling
+   * Simple rate-limited request wrapper with proper 429 handling
    */
   async makeRateLimitedRequest(requestFn) {
-    // Check circuit breaker first
-    if (this.isCircuitOpen()) {
-      throw new ApiError('GridStatus API temporarily unavailable due to consecutive failures', 503);
-    }
-    
-    return new Promise((resolve, reject) => {
-      // Create timeout promise for this specific request
-      const timeoutId = setTimeout(() => {
-        this.recordFailure();
-        reject(new ApiError('Request timeout - GridStatus API taking too long', 504));
-      }, this.requestTimeout);
-      
-      // Wrap resolve/reject to clear timeout and handle circuit breaker
-      const wrappedResolve = (result) => {
-        clearTimeout(timeoutId);
-        this.recordSuccess();
-        resolve(result);
-      };
-      
-      const wrappedReject = (error) => {
-        clearTimeout(timeoutId);
-        this.recordFailure();
-        reject(error);
-      };
-      
-      this.requestQueue.push({ requestFn, resolve: wrappedResolve, reject: wrappedReject });
-      this.processQueue();
-    });
-  }
-
-  /**
-   * Process request queue with rate limiting and timeout awareness
-   */
-  async processQueue() {
-    if (this.isProcessingQueue || this.requestQueue.length === 0) {
-      return;
-    }
-
-    this.isProcessingQueue = true;
-
-    while (this.requestQueue.length > 0) {
-      const { requestFn, resolve, reject } = this.requestQueue.shift();
-      
-      try {
-        await this.waitForRateLimit();
-        
-        // Execute request with internal timeout race - faster for Netlify
-        const requestPromise = requestFn();
-        const internalTimeoutPromise = new Promise((_, timeoutReject) => {
-          setTimeout(() => {
-            timeoutReject(new ApiError('Internal request timeout', 504));
-          }, this.requestTimeout - 200); // Smaller buffer for faster timeout
-        });
-        
-        this.lastRequestTime = Date.now();
-        
-        const result = await Promise.race([requestPromise, internalTimeoutPromise]);
-        resolve(result);
-      } catch (error) {
-        reject(error);
-      }
-    }
-
-    this.isProcessingQueue = false;
-  }
-
-  /**
-   * Wait for rate limit if necessary, but respect overall timeout constraints
-   */
-  async waitForRateLimit() {
+    // Simple rate limiting
     const now = Date.now();
     const timeSinceLastRequest = now - this.lastRequestTime;
     const waitTime = Math.max(0, this.minRequestInterval - timeSinceLastRequest);
     
     if (waitTime > 0) {
-      // Much more aggressive for Netlify - minimal waiting
-      const maxWaitTime = Math.min(waitTime, 800); // Maximum 800ms wait
-      
-      if (maxWaitTime > 100) { // Only wait if it's significant
-        logger.debug(`⏳ Rate limiting: waiting ${maxWaitTime}ms before next request (Netlify optimization)`);
-        await new Promise(resolve => setTimeout(resolve, maxWaitTime));
-      } else {
-        logger.debug('⚡ Skipping minimal rate limit wait for Netlify speed optimization');
+      logger.info(`⏳ Rate limiting: waiting ${waitTime}ms before GridStatus API call`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+    
+    this.lastRequestTime = Date.now();
+    
+    try {
+      const result = await requestFn();
+      logger.debug(`✅ GridStatus API call successful`);
+      return result;
+    } catch (error) {
+      // Handle rate limit errors with exponential backoff
+      if (error.response?.status === 429) {
+        logger.warn('⚠️  Rate limited by GridStatus API, implementing backoff');
+        
+        // Extract retry-after header if available
+        const retryAfter = error.response?.headers?.['retry-after'];
+        const backoffTime = retryAfter ? parseInt(retryAfter) * 1000 : 3000; // 3 seconds default
+        
+        logger.warn(`⏳ Backing off for ${backoffTime}ms due to rate limit`);
+        await new Promise(resolve => setTimeout(resolve, backoffTime));
+        
+        // Update last request time to include backoff
+        this.lastRequestTime = Date.now();
+        
+        // Retry once after backoff
+        try {
+          const retryResult = await requestFn();
+          logger.info(`✅ GridStatus API retry successful after rate limit`);
+          return retryResult;
+        } catch (retryError) {
+          logger.error(`❌ GridStatus API retry failed: ${retryError.message}`);
+          throw new ApiError('GridStatus API rate limit exceeded. Please try again later.', 429);
+        }
       }
+      
+      // Handle other error types
+      if (error.response?.status === 401) {
+        throw new ApiError('Invalid GridStatus API key', 401);
+      }
+      if (error.response?.status === 404) {
+        throw new ApiError('GridStatus API endpoint not found', 404);
+      }
+      
+      throw error;
     }
   }
 
@@ -381,60 +294,79 @@ class GridStatusClient {
   }
 
   /**
-   * Get both day-ahead and real-time prices for a specific date
+   * Get combined market prices for a specific date - OPTIMIZED FOR SINGLE API CALL
    */
   async getMarketPrices(date, iso = 'CAISO') {
     this.validateDate(date);
     
     logger.info(`📊 Fetching market prices for ${iso} on ${date} (Pacific Time)`);
     
-    // Fast path: Try datasets cache first, with shorter timeout for Netlify
-    const isNetlify = process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME;
-    const datasets = await this.findCAISOLMPDatasets();
     const { startTime, endTime, timezone } = this.getPacificTimeRange(date);
-    
     logger.info(`🕐 Query range: ${startTime} to ${endTime} (${timezone})`);
     
-    if (isNetlify) {
-      // Netlify optimization: Try day-ahead first, fallback quickly if it fails
-      try {
-        const dayAheadData = await this.fetchDatasetData(datasets.dayAhead, startTime, endTime, timezone, 'day-ahead');
+    // Use known CAISO real-time dataset ID to avoid extra API calls
+    const knownDataset = {
+      id: 'caiso_lmp_hasp_15_min', // Known CAISO real-time LMP dataset
+      name: 'CAISO LMP HASP 15-minute',
+      source: 'caiso'
+    };
+    
+    logger.info(`📊 Using known dataset: ${knownDataset.id}`);
+    
+    // Single API call to get all market data
+    const allData = await this.fetchDatasetData(
+      knownDataset, 
+      startTime, 
+      endTime, 
+      timezone, 
+      'market-data'
+    );
+    
+    // Split data into day-ahead and real-time based on timestamps
+    const dayAheadData = [];
+    const realTimeData = [];
+    
+    allData.forEach(item => {
+      const timestamp = item.interval_start_utc || item.interval_start_local || item.timestamp;
+      if (timestamp) {
+        const date = new Date(timestamp);
+        const minute = date.getMinutes();
         
-        // If we get day-ahead data, try real-time with shorter timeout
-        let realTimeData = [];
-        try {
-          realTimeData = await Promise.race([
-            this.fetchDatasetData(datasets.realTime, startTime, endTime, timezone, 'real-time'),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('RT timeout')), 2000))
-          ]);
-        } catch (error) {
-          logger.warn(`⚠️  Real-time data timeout on Netlify, using day-ahead only: ${error.message}`);
+        // Day-ahead data typically has hourly intervals (minute 0)
+        // Real-time data has 15-minute intervals
+        if (minute === 0) {
+          dayAheadData.push(item);
         }
-        
-        this.logDataDistribution(dayAheadData, 'day-ahead');
-        this.logDataDistribution(realTimeData, 'real-time');
-        
-        return { dayAheadData, realTimeData };
-      } catch (error) {
-        logger.error(`❌ Fast path failed on Netlify: ${error.message}`);
-        throw new ApiError(`No market data available for ${iso} on ${date}. API timeout on serverless platform.`, 404);
+        realTimeData.push(item);
       }
-    } else {
-      // Standard path for local development
-      const [dayAheadData, realTimeData] = await Promise.all([
-        this.fetchDatasetData(datasets.dayAhead, startTime, endTime, timezone, 'day-ahead'),
-        this.fetchDatasetData(datasets.realTime, startTime, endTime, timezone, 'real-time')
-      ]);
+    });
+    
+    this.logDataDistribution(dayAheadData, 'day-ahead');
+    this.logDataDistribution(realTimeData, 'real-time');
+    
+    if (realTimeData.length === 0) {
+      logger.warn(`⚠️  No data from primary dataset, falling back to datasets discovery`);
       
-      this.logDataDistribution(dayAheadData, 'day-ahead');
-      this.logDataDistribution(realTimeData, 'real-time');
+      // Fallback: try to find datasets (this will make another API call)
+      const datasets = await this.findCAISOLMPDatasets();
+      const fallbackData = await this.fetchDatasetData(
+        datasets.realTime || datasets.dayAhead, 
+        startTime, 
+        endTime, 
+        timezone, 
+        'fallback-data'
+      );
       
-      if (dayAheadData.length === 0 && realTimeData.length === 0) {
-        throw new ApiError(`No market data available for ${iso} on ${date}. The date may be too recent or too old.`, 404);
-      }
-      
-      return { dayAheadData, realTimeData };
+      return { 
+        dayAheadData: fallbackData, 
+        realTimeData: fallbackData 
+      };
     }
+    
+    return { 
+      dayAheadData: dayAheadData.length > 0 ? dayAheadData : realTimeData, 
+      realTimeData 
+    };
   }
 
   /**
@@ -454,7 +386,7 @@ class GridStatusClient {
           params: {
             start_time: startTime,
             end_time: endTime,
-            page_size: type === 'day-ahead' ? 200 : 100, // Much smaller pages for Netlify speed
+            page_size: 500, // Larger page size for single request
             timezone: timezone
           }
         });
