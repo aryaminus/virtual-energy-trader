@@ -80,8 +80,18 @@ const cacheMarketData = (dataCache, date, iso, userTimezone, marketData) => {
       return;
     }
     
-    // Validate data integrity by serializing
-    JSON.stringify(marketData);
+    // Validate data integrity by serializing (with safe error handling)
+    try {
+      const serialized = JSON.stringify(marketData);
+      // Check if data is too large
+      if (serialized.length > 2 * 1024 * 1024) { // 2MB limit
+        logger.warn(`⚠️  Market data for ${date} is very large (${serialized.length} chars), caching anyway but consider optimization`);
+      }
+    } catch (serializationError) {
+      logger.error(`❌ Market data serialization failed for ${date}: ${serializationError.message}`);
+      // Don't cache data that can't be serialized
+      return;
+    }
     
     const { key, params } = createCacheKey(date, iso, userTimezone);
     dataCache.set(key, params, marketData);

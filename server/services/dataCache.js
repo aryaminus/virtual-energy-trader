@@ -85,8 +85,21 @@ class DataCache {
         return null;
       }
       
-      // Try to serialize and parse to detect corruption
-      JSON.stringify(cached.data);
+      // Try to serialize and parse to detect corruption (with size limit)
+      try {
+        const serialized = JSON.stringify(cached.data);
+        // Check if serialized data is too large (>1MB suggests potential issue)
+        if (serialized.length > 1024 * 1024) {
+          console.warn(`⚠️  Cache entry ${key} is very large (${serialized.length} chars), consider optimization`);
+        }
+      } catch (serializationError) {
+        // If serialization fails, the data might have circular references or be corrupted
+        console.warn(`⚠️  Cache corruption detected for key ${key}: ${serializationError.message}`);
+        this.cache.delete(key);
+        this.stats.misses++;
+        this.stats.deletes++;
+        return null;
+      }
       
       // Update access statistics
       cached.accessCount++;
@@ -96,6 +109,7 @@ class DataCache {
       return cached.data;
     } catch (error) {
       // Cache corruption detected - remove corrupted entry
+      console.warn(`⚠️  Cache validation error for key ${key}: ${error.message}`);
       this.cache.delete(key);
       this.stats.misses++;
       this.stats.deletes++;
@@ -138,7 +152,7 @@ class DataCache {
   }
 
   /**
-   * Estimate memory usage of cache
+   * Estimate memory usage of cache (simplified)
    * @returns {number} Estimated memory usage in bytes
    */
   getMemoryUsage() {
@@ -146,7 +160,15 @@ class DataCache {
     
     for (const [key, value] of this.cache) {
       totalSize += key.length * 2; // Approximate string size
-      totalSize += JSON.stringify(value).length * 2; // Approximate object size
+      
+      // Safe memory estimation without risky serialization
+      try {
+        const serialized = JSON.stringify(value);
+        totalSize += serialized.length * 2;
+      } catch (error) {
+        // For unserializable objects, use rough estimate
+        totalSize += 1000; // Rough estimate for complex objects
+      }
     }
     
     return totalSize;
@@ -171,18 +193,28 @@ class DataCache {
   }
 
   /**
-   * Get cache entries sorted by access frequency
+   * Get cache entries sorted by access frequency (simplified)
    * @returns {Array} Array of cache entries with metadata
    */
   getTopEntries(limit = 10) {
     const entries = Array.from(this.cache.entries())
-      .map(([key, value]) => ({
-        key,
-        accessCount: value.accessCount,
-        createdAt: value.createdAt,
-        lastAccessed: value.lastAccessed,
-        size: JSON.stringify(value.data).length
-      }))
+      .map(([key, value]) => {
+        // Safe size estimation without risky serialization
+        let size = 0;
+        try {
+          size = JSON.stringify(value.data).length;
+        } catch (error) {
+          size = 1000; // Rough estimate for unserializable objects
+        }
+        
+        return {
+          key,
+          accessCount: value.accessCount || 0,
+          createdAt: value.createdAt,
+          lastAccessed: value.lastAccessed,
+          size
+        };
+      })
       .sort((a, b) => b.accessCount - a.accessCount)
       .slice(0, limit);
     

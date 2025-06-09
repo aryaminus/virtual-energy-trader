@@ -45,15 +45,37 @@ export const transformGridStatusData = (dayAheadData, realTimeData, userTimezone
   const interpolatedHours = [];
   const fallbackHours = [];
   
-  // Log sample records to understand the data structure
+  // Log sample records to understand the data structure (safely)
   if (dayAheadData.length > 0) {
-    logger.info(`📋 Sample day-ahead record: ${JSON.stringify(dayAheadData[0])}`);
-    logger.info(`📋 Day-ahead data keys: ${Object.keys(dayAheadData[0]).join(', ')}`);
+    try {
+      // Safe logging that won't break on circular references or large objects
+      const sample = dayAheadData[0];
+      logger.info(`📋 Day-ahead data keys: ${Object.keys(sample).join(', ')}`);
+      
+      // Log only essential fields safely
+      const timestamp = sample.interval_start_utc || sample.interval_start_local || sample.timestamp || 'N/A';
+      const price = sample.lmp || sample.price || sample.energy_price || 'N/A';
+      const location = sample.location || sample.pnode || 'N/A';
+      logger.info(`📋 Sample day-ahead: timestamp=${timestamp}, price=${price}, location=${location}`);
+    } catch (error) {
+      logger.warn(`⚠️  Could not log day-ahead sample data: ${error.message}`);
+    }
   }
   
   if (realTimeData.length > 0) {
-    logger.info(`📋 Sample real-time record: ${JSON.stringify(realTimeData[0])}`);
-    logger.info(`📋 Real-time data keys: ${Object.keys(realTimeData[0]).join(', ')}`);
+    try {
+      // Safe logging that won't break on circular references or large objects
+      const sample = realTimeData[0];
+      logger.info(`📋 Real-time data keys: ${Object.keys(sample).join(', ')}`);
+      
+      // Log only essential fields safely
+      const timestamp = sample.interval_start_utc || sample.interval_start_local || sample.timestamp || 'N/A';
+      const price = sample.lmp || sample.price || sample.energy_price || 'N/A';
+      const location = sample.location || sample.pnode || 'N/A';
+      logger.info(`📋 Sample real-time: timestamp=${timestamp}, price=${price}, location=${location}`);
+    } catch (error) {
+      logger.warn(`⚠️  Could not log real-time sample data: ${error.message}`);
+    }
   }
 
   // Transform day-ahead prices using Pacific Time first, then convert to user timezone
