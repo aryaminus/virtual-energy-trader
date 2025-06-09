@@ -294,79 +294,30 @@ class GridStatusClient {
   }
 
   /**
-   * Get combined market prices for a specific date - OPTIMIZED FOR SINGLE API CALL
+   * Get both day-ahead and real-time prices for a specific date
    */
   async getMarketPrices(date, iso = 'CAISO') {
     this.validateDate(date);
     
     logger.info(`📊 Fetching market prices for ${iso} on ${date} (Pacific Time)`);
     
+    const datasets = await this.findCAISOLMPDatasets();
     const { startTime, endTime, timezone } = this.getPacificTimeRange(date);
     logger.info(`🕐 Query range: ${startTime} to ${endTime} (${timezone})`);
     
-    // Use known CAISO real-time dataset ID to avoid extra API calls
-    const knownDataset = {
-      id: 'caiso_lmp_hasp_15_min', // Known CAISO real-time LMP dataset
-      name: 'CAISO LMP HASP 15-minute',
-      source: 'caiso'
-    };
-    
-    logger.info(`📊 Using known dataset: ${knownDataset.id}`);
-    
-    // Single API call to get all market data
-    const allData = await this.fetchDatasetData(
-      knownDataset, 
-      startTime, 
-      endTime, 
-      timezone, 
-      'market-data'
-    );
-    
-    // Split data into day-ahead and real-time based on timestamps
-    const dayAheadData = [];
-    const realTimeData = [];
-    
-    allData.forEach(item => {
-      const timestamp = item.interval_start_utc || item.interval_start_local || item.timestamp;
-      if (timestamp) {
-        const date = new Date(timestamp);
-        const minute = date.getMinutes();
-        
-        // Day-ahead data typically has hourly intervals (minute 0)
-        // Real-time data has 15-minute intervals
-        if (minute === 0) {
-          dayAheadData.push(item);
-        }
-        realTimeData.push(item);
-      }
-    });
+    const [dayAheadData, realTimeData] = await Promise.all([
+      this.fetchDatasetData(datasets.dayAhead, startTime, endTime, timezone, 'day-ahead'),
+      this.fetchDatasetData(datasets.realTime, startTime, endTime, timezone, 'real-time')
+    ]);
     
     this.logDataDistribution(dayAheadData, 'day-ahead');
     this.logDataDistribution(realTimeData, 'real-time');
     
-    if (realTimeData.length === 0) {
-      logger.warn(`⚠️  No data from primary dataset, falling back to datasets discovery`);
-      
-      // Fallback: try to find datasets (this will make another API call)
-      const datasets = await this.findCAISOLMPDatasets();
-      const fallbackData = await this.fetchDatasetData(
-        datasets.realTime || datasets.dayAhead, 
-        startTime, 
-        endTime, 
-        timezone, 
-        'fallback-data'
-      );
-      
-      return { 
-        dayAheadData: fallbackData, 
-        realTimeData: fallbackData 
-      };
+    if (dayAheadData.length === 0 && realTimeData.length === 0) {
+      throw new ApiError(`No market data available for ${iso} on ${date}. The date may be too recent or too old.`, 404);
     }
     
-    return { 
-      dayAheadData: dayAheadData.length > 0 ? dayAheadData : realTimeData, 
-      realTimeData 
-    };
+    return { dayAheadData, realTimeData };
   }
 
   /**
@@ -386,7 +337,7 @@ class GridStatusClient {
           params: {
             start_time: startTime,
             end_time: endTime,
-            page_size: 500, // Larger page size for single request
+            page_size: type === 'day-ahead' ? 2000 : 4000,
             timezone: timezone
           }
         });
