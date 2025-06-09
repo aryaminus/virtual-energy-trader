@@ -5,6 +5,21 @@ import { logger } from '../utils/logger.js';
 import { ApiError } from '../utils/errors.js';
 
 /**
+ * Configuration constants
+ */
+const DEFAULT_TIMEZONE = 'America/Los_Angeles';
+
+/**
+ * Extract user timezone from request
+ */
+const getUserTimezone = (req) => {
+  const { timezone } = req.query;
+  const headerTimezone = req.get('X-User-Timezone');
+  const bodyTimezone = req.body?.timezone;
+  return timezone || headerTimezone || bodyTimezone || DEFAULT_TIMEZONE;
+};
+
+/**
  * Service getter utilities using unified services
  */
 const getServices = () => ({
@@ -185,10 +200,10 @@ export const getAIProviders = async (req, res, next) => {
 export const analyzeSpikes = async (req, res, next) => {
   try {
     const { date } = req.params;
-    const { analysisType, thresholds, timezone } = req.body;
+    const { analysisType, thresholds } = req.body;
     
-    // Get user's timezone from request body or headers
-    const userTimezone = timezone || req.get('X-User-Timezone') || 'America/Los_Angeles';
+    // Get user's timezone using consistent method
+    const userTimezone = getUserTimezone(req);
     
     // Get and validate services
     const services = getServices();
@@ -299,6 +314,11 @@ export const performAIAnalysis = async (req, res, next) => {
     
   } catch (error) {
     logger.error('❌ AI analysis error:', error);
-    handleAIProviderError(error);
+    
+    try {
+      handleAIProviderError(error);
+    } catch (handledError) {
+      return next(handledError);
+    }
   }
 };
