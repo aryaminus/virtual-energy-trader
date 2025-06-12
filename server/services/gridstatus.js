@@ -305,10 +305,9 @@ class GridStatusClient {
     const { startTime, endTime, timezone } = this.getPacificTimeRange(date);
     logger.info(`🕐 Query range: ${startTime} to ${endTime} (${timezone})`);
     
-    const [dayAheadData, realTimeData] = await Promise.all([
-      this.fetchDatasetData(datasets.dayAhead, startTime, endTime, timezone, 'day-ahead'),
-      this.fetchDatasetData(datasets.realTime, startTime, endTime, timezone, 'real-time')
-    ]);
+    // NOTE: Before trying Promise.all, note there is Rate-limit of 1 request per second for Free Tier of GridStatus. Update only if applicable.
+    const dayAheadData = await this.fetchDatasetData(datasets.dayAhead, startTime, endTime, timezone, 'day-ahead');
+    const realTimeData = await this.fetchDatasetData(datasets.realTime, startTime, endTime, timezone, 'real-time');
     
     this.logDataDistribution(dayAheadData, 'day-ahead');
     this.logDataDistribution(realTimeData, 'real-time');
@@ -321,7 +320,24 @@ class GridStatusClient {
   }
 
   /**
-   * Fetch data from a specific dataset
+   * Get representative CAISO trading hubs for efficient data sampling (CAISO DAY_AHEAD_HOURLY; CAISO REAL_TIME_15_MIN)
+   * {@link https://opensource.gridstatus.io/en/stable/lmp.html}
+   */
+  getRepresentativeLocations() {
+    // Use only 2 major trading hubs (largest price zones in California) for speed while maintaining accuracy
+    return [
+      'TH_NP15_GEN-APND',     // NP15 Trading Hub (Northern California)
+      'TH_SP15_GEN-APND'      // SP15 Trading Hub (Southern California)
+      // TODO: Check and add more hubs (RATE LIMIT)
+      // 'TH_ZP26_GEN-APND',     // ZP26 Trading Hub (Central Valley)
+      // 'DLAP_PGAE-APND',       // PG&E Load Aggregation Point
+      // 'DLAP_SCE-APND',        // SCE Load Aggregation Point
+      // 'DLAP_SDGE-APND'        // SDGE Load Aggregation Point
+    ];
+  }
+
+  /**
+   * Fetch data from a specific dataset using representative locations
    */
   async fetchDatasetData(dataset, startTime, endTime, timezone, type) {
     if (!dataset) {
@@ -332,20 +348,33 @@ class GridStatusClient {
     try {
       logger.info(`📊 Fetching ${type} data from: ${dataset.id}`);
       
-      const response = await this.makeRateLimitedRequest(async () => {
-        return await this.client.get(`/v1/datasets/${dataset.id}/query`, {
-          params: {
-            start_time: startTime,
-            end_time: endTime,
-            page_size: type === 'day-ahead' ? 2000 : 4000,
-            timezone: timezone
-          }
-        });
-      });
+      const representativeLocations = this.getRepresentativeLocations();
+      let allData = [];
       
-      const data = response.data?.data || [];
-      logger.info(`✅ Fetched ${data.length} ${type} records`);
-      return data;
+      // Fetch data for each representative location separately
+      for (const location of representativeLocations) {
+        const response = await this.makeRateLimitedRequest(async () => {
+          return await this.client.get(`/v1/datasets/${dataset.id}/query`, {
+            params: {
+              start_time: startTime,
+              end_time: endTime,
+              filter_column: 'location',
+              filter_value: location,
+              page_size: type === 'day-ahead' ? 30 : 100,
+              timezone: timezone
+            }
+          });
+        });
+        
+        const locationData = response.data?.data || [];
+        allData = allData.concat(locationData);
+        
+        logger.info(`📍 ${location}: ${locationData.length} records`);          
+      }
+      
+      logger.info(`✅ Fetched ${allData.length} ${type} records from ${representativeLocations.length} representative locations`);
+      
+      return allData;
     } catch (error) {
       logger.warn(`⚠️  Failed to fetch ${type} data: ${error.message}`);
       return [];
