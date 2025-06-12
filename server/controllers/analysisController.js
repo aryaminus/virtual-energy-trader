@@ -94,12 +94,9 @@ const handleAIProviderError = (error) => {
  */
 const fetchMarketData = async (gridStatusClient, date, userTimezone) => {
   try {
-    // Test connection first
-    await gridStatusClient.testConnection();
-    
     // Fetch real-time price data
     logger.info('📡 Fetching real market data from GridStatus API');
-    const realTimeData = await gridStatusClient.getRealTimePrices(date);
+    const { realTimeData } = await gridStatusClient.getMarketPrices(date);
     
     if (!realTimeData || realTimeData.length === 0) {
       throw new ApiError(`No market data available for ${date}. Please try a different date.`, 404);

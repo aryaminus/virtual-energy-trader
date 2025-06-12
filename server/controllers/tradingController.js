@@ -183,11 +183,8 @@ const handleGridStatusError = (error, date, iso) => {
  */
 const fetchMarketData = async (gridStatusClient, date, iso) => {
   try {
-    logger.info(`📊 Fetching day-ahead prices for ${iso} on ${date}`);
-    const dayAheadData = await gridStatusClient.getDayAheadPrices(date, iso);
-    
-    logger.info(`📊 Fetching real-time prices for ${iso} on ${date}`);
-    const realTimeData = await gridStatusClient.getRealTimePrices(date, iso);
+    logger.info(`🔄 Fetching market data for ${date} from GridStatus API...`);
+    const { dayAheadData, realTimeData } = await gridStatusClient.getMarketPrices(date, iso);
     
     logger.info(`✅ Successfully fetched market data: ${dayAheadData.length} DA, ${realTimeData.length} RT records`);
     
